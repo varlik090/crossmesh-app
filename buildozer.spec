@@ -32,6 +32,9 @@ osx.kivy_version = 2.2.0
 # Android specific
 fullscreen = 0
 
+# (str) Android build tools version (Lisans hatasını çözen kritik ekleme)
+android.build_tools_version = 33.0.2
+
 # (int) Target Android API
 android.api = 33
 
@@ -44,7 +47,7 @@ android.ndk_api = 24
 # (bool) Copy library instead of making a libpymodules.so
 android.copy_libs = 1
 
-# (list) The Android archs to build for (Colab çökmesini önlemek için tek mimari)
+# (list) The Android archs to build for
 android.archs = arm64-v8a
 
 # (bool) enables Android auto backup feature
@@ -58,6 +61,12 @@ ios.ios_deploy_branch = 1.12.2
 ios.codesign.allowed = false
 
 [buildozer]
+
+# (int) Log level (0 = error only, 1 = info, 2 = debug)
+log_level = 2
+
+# (int) Display warning if buildozer is run as root
+warn_on_root = 1
 
 # (int) Log level (0 = error only, 1 = info, 2 = debug)
 log_level = 2
