@@ -32,7 +32,7 @@ osx.kivy_version = 2.2.0
 # Android specific
 fullscreen = 0
 
-# (str) Android build tools version (Lisans hatasını çözen kritik ekleme)
+# (str) Android build tools version
 android.build_tools_version = 33.0.2
 
 # (int) Target Android API
@@ -61,12 +61,6 @@ ios.ios_deploy_branch = 1.12.2
 ios.codesign.allowed = false
 
 [buildozer]
-
-# (int) Log level (0 = error only, 1 = info, 2 = debug)
-log_level = 2
-
-# (int) Display warning if buildozer is run as root
-warn_on_root = 1
 
 # (int) Log level (0 = error only, 1 = info, 2 = debug)
 log_level = 2
