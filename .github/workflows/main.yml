@@ -7,7 +7,7 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
 
     steps:
     - name: Checkout repository
@@ -26,11 +26,14 @@ jobs:
     - name: Install Buildozer and Cython
       run: |
         pip install --upgrade pip
-        pip install buildozer cython==0.29.33
+        pip install "buildozer>=1.5.0" "cython==0.29.33"
 
     - name: Build APK with Buildozer
       run: |
-        buildozer -v android debug
+        export ACCEPT_BUILD_TOOLS_CHECKSUMS=1
+        yes | buildozer -v android debug
+      env:
+        YES: "1"
 
     - name: Upload APK Artifact
       uses: actions/upload-artifact@v4
