@@ -25,6 +25,7 @@ import org.bouncycastle.crypto.params.X25519PrivateKeyParameters
 import org.bouncycastle.crypto.params.X25519PublicKeyParameters
 import org.bouncycastle.math.ec.rfc8032.Ed25519
 import org.eclipse.paho.client.mqttv3.*
+import org.eclipse.paho.client.mqttv3.persist.MemoryPersistence
 import org.json.JSONObject
 import java.nio.charset.StandardCharsets
 import java.security.MessageDigest
@@ -156,7 +157,7 @@ class CypherNode(
         require(nick.isNotBlank())
         crypto.reset()
         val topic = TOPIC_PREFIX + "/" + sha256Hex(room.toByteArray()).take(32)
-        val c = MqttClient(MQTT_HOST, "cna-" + UUID.randomUUID().toString().take(10))
+        val c = MqttClient(MQTT_HOST, "cna-" + UUID.randomUUID().toString().take(10), MemoryPersistence())
         c.setCallback(object : MqttCallback {
             override fun connectionLost(cause: Throwable?) { onState("Connection lost") }
             override fun messageArrived(topic: String?, message: MqttMessage?) {
@@ -166,7 +167,8 @@ class CypherNode(
         })
         val opts = MqttConnectOptions().apply {
             isCleanSession = true
-            connectionTimeout = 15
+            isAutomaticReconnect = true
+            connectionTimeout = 20
             keepAliveInterval = 60
             socketFactory = javax.net.ssl.SSLSocketFactory.getDefault()
         }
@@ -434,7 +436,13 @@ fun CypherApp() {
                                 try {
                                     node.connect(room, nick)
                                 } catch (e: Exception) {
-                                    withContext(Dispatchers.Main) { status = "Connection error: " + (e.message ?: "unknown") }
+                                    withContext(Dispatchers.Main) {
+                                        status = if (e is MqttException) {
+                                            "MQTT error " + e.reasonCode + ": " + (e.cause?.message ?: e.message ?: "unknown")
+                                        } else {
+                                            "Connection error: " + (e.message ?: e.javaClass.simpleName)
+                                        }
+                                    }
                                 }
                             }
                         }) { Text("C") }
