@@ -264,12 +264,14 @@ class CypherNode(
     private fun publish(obj: Map<String, Any?>) {
         val raw = canonical(obj)
         val topic = TOPIC_PREFIX + "/" + sha256Hex(room.toByteArray()).take(32)
-        client?.publish(topic, MqttMessage(raw).apply { qos = 1 })
+        val png = Stego.embed(raw)
+        client?.publish(topic, MqttMessage(png).apply { qos = 1 })
     }
 
     private fun handle(raw: ByteArray) {
         try {
-            val o = JSONObject(String(raw, StandardCharsets.UTF_8))
+            val payload = Stego.extract(raw)
+            val o = JSONObject(String(payload, StandardCharsets.UTF_8))
             if (o.optInt("v") != 2) return
             when (o.optString("type")) {
                 "HELLO" -> handleHello(o)
