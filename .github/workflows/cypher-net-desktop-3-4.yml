@@ -1,0 +1,83 @@
+name: CYPHER_NET 3.4 Windows Installer
+
+on:
+  push:
+    branches:
+      - cypher-net-desktop-3.4
+  workflow_dispatch:
+
+jobs:
+  build-windows-installer:
+    runs-on: windows-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          architecture: 'x64'
+
+      - name: Reconstruct hardened source and icon
+        shell: pwsh
+        run: |
+          @'
+          import base64, gzip, hashlib
+          from pathlib import Path
+
+          root = Path("cypher_net_desktop")
+          parts = sorted((root / "src_parts").glob("part*.b64"))
+          encoded = "".join(p.read_text(encoding="utf-8").strip() for p in parts)
+          source = gzip.decompress(base64.b64decode(encoded))
+          digest = hashlib.sha256(source).hexdigest()
+          expected = "5a56d930609a9c1dcdd6fe5589e4427950a1824f8e22845989425d2104489d3d"
+          print("source_sha256=", digest)
+          if digest != expected:
+              raise SystemExit("SOURCE HASH MISMATCH - refusing to build")
+          (root / "CYPHER_NET.py").write_bytes(source)
+
+          icon_b64 = (root / "CYPHER_NET.ico.b64").read_text(encoding="utf-8").strip()
+          (root / "CYPHER_NET.ico").write_bytes(base64.b64decode(icon_b64))
+          '@ | python -
+
+      - name: Syntax check
+        run: python -m py_compile cypher_net_desktop/CYPHER_NET.py
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip wheel
+          python -m pip install -r cypher_net_desktop/requirements.txt
+
+      - name: Build Windows executable
+        shell: pwsh
+        run: |
+          Set-Location cypher_net_desktop
+          python -m PyInstaller --noconfirm --clean CYPHER_NET.spec
+          if (!(Test-Path "dist\CYPHER_NET.exe")) { throw "PyInstaller did not create CYPHER_NET.exe" }
+          Get-FileHash "dist\CYPHER_NET.exe" -Algorithm SHA256
+
+      - name: Install Inno Setup
+        shell: pwsh
+        run: |
+          if (!(Test-Path "C:\Program Files (x86)\Inno Setup 6\ISCC.exe")) {
+            choco install innosetup -y --no-progress
+          }
+
+      - name: Build installer
+        shell: pwsh
+        run: |
+          Set-Location cypher_net_desktop
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer.iss
+          if (!(Test-Path "installer_out\CYPHER_NET_3_4_0_SETUP.exe")) { throw "Installer was not created" }
+          Get-FileHash "installer_out\CYPHER_NET_3_4_0_SETUP.exe" -Algorithm SHA256
+
+      - name: Upload installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: CYPHER_NET_3_4_0_WINDOWS_SETUP
+          path: cypher_net_desktop/installer_out/CYPHER_NET_3_4_0_SETUP.exe
+          if-no-files-found: error
+          retention-days: 30
