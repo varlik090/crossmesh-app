@@ -1,0 +1,1 @@
+CYPHER_NET 3.4.0 hardened Windows installer build.
