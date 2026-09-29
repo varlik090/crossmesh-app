@@ -1,0 +1,114 @@
+name: CYPHER_NET Windows 3.6 Hardened
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - cypher-net-windows-3.6
+    paths:
+      - "windows36/**"
+      - ".github/workflows/cypher-net-windows-36.yml"
+
+jobs:
+  build:
+    runs-on: windows-latest
+    permissions:
+      contents: read
+    env:
+      QT_QPA_PLATFORM: offscreen
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Reconstruct audited source
+        shell: pwsh
+        run: |
+          @'
+          import base64, gzip, hashlib
+          from pathlib import Path
+          parts = [Path(f"windows36/source/part{i:02d}.b64").read_text().strip() for i in range(6)]
+          data = gzip.decompress(base64.b64decode("".join(parts)))
+          expected = "29cb5866081e5868dc97e3fc5dca54449c44164999de0ae2295dc4eed6940046"
+          actual = hashlib.sha256(data).hexdigest()
+          if actual != expected:
+              raise SystemExit(f"source integrity mismatch: {actual}")
+          Path("CYPHER_NET.py").write_bytes(data)
+          print("source sha256:", actual)
+          '@ | Set-Content reconstruct.py
+          python reconstruct.py
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install PyQt6 paho-mqtt Pillow cryptography PySocks pyinstaller
+
+      - name: Syntax and security regression tests
+        run: |
+          python -m py_compile CYPHER_NET.py
+          python windows36/SELFTEST.py
+
+      - name: Build portable EXE
+        run: |
+          pyinstaller --noconfirm --clean --onefile --windowed --name CYPHER_NET_3_6_0_WINDOWS CYPHER_NET.py
+
+      - name: Install Inno Setup
+        run: choco install innosetup -y --no-progress
+
+      - name: Create installer
+        shell: pwsh
+        run: |
+          @'
+          [Setup]
+          AppId={{948D1C77-477E-4B4A-A566-91B717A56936}
+          AppName=CYPHER_NET
+          AppVersion=3.6.0
+          AppPublisher=CYPHER_NET
+          DefaultDirName={autopf}\CYPHER_NET
+          DefaultGroupName=CYPHER_NET
+          OutputDir=installer_out
+          OutputBaseFilename=CYPHER_NET_3_6_0_WINDOWS_SETUP
+          Compression=lzma2
+          SolidCompression=yes
+          ArchitecturesAllowed=x64compatible
+          ArchitecturesInstallIn64BitMode=x64compatible
+          PrivilegesRequired=lowest
+          UninstallDisplayIcon={app}\CYPHER_NET.exe
+          WizardStyle=modern
+
+          [Files]
+          Source: "dist\CYPHER_NET_3_6_0_WINDOWS.exe"; DestDir: "{app}"; DestName: "CYPHER_NET.exe"; Flags: ignoreversion
+
+          [Icons]
+          Name: "{group}\CYPHER_NET"; Filename: "{app}\CYPHER_NET.exe"
+          Name: "{autodesktop}\CYPHER_NET"; Filename: "{app}\CYPHER_NET.exe"; Tasks: desktopicon
+
+          [Tasks]
+          Name: "desktopicon"; Description: "Create a desktop shortcut"; GroupDescription: "Additional icons:"
+
+          [Run]
+          Filename: "{app}\CYPHER_NET.exe"; Description: "Launch CYPHER_NET"; Flags: nowait postinstall skipifsilent
+          '@ | Set-Content installer.iss
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer.iss
+
+      - name: Checksums
+        shell: pwsh
+        run: |
+          Get-FileHash CYPHER_NET.py -Algorithm SHA256 | Format-List
+          Get-FileHash dist\CYPHER_NET_3_6_0_WINDOWS.exe -Algorithm SHA256 | Format-List
+          Get-FileHash installer_out\CYPHER_NET_3_6_0_WINDOWS_SETUP.exe -Algorithm SHA256 | Format-List
+
+      - name: Upload Windows builds
+        uses: actions/upload-artifact@v4
+        with:
+          name: CYPHER_NET_3_6_0_WINDOWS_HARDENED
+          path: |
+            CYPHER_NET.py
+            dist/CYPHER_NET_3_6_0_WINDOWS.exe
+            installer_out/CYPHER_NET_3_6_0_WINDOWS_SETUP.exe
+          if-no-files-found: error
+          retention-days: 30
