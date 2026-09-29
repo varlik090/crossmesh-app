@@ -1,5 +1,6 @@
-import os, tempfile, json, hashlib
+import os, sys, tempfile, json, hashlib
 os.environ["QT_QPA_PLATFORM"] = "offscreen"
+sys.path.insert(0, os.getcwd())
 
 import CYPHER_NET as cn
 from PyQt6.QtWidgets import QApplication
@@ -20,7 +21,6 @@ prep(a, "Alice", room)
 prep(b, "Bob", room)
 assert a._room_topic == b._room_topic
 
-# Basic V4 peer discovery + encrypted message + replay rejection.
 b._handle_hello(a._hello_body())
 a._handle_hello(b._hello_body())
 assert "Bob" in a.peers and "Alice" in b.peers
@@ -34,13 +34,11 @@ assert received == [("Alice", "hello")]
 b._handle_packet_v4(p)
 assert len(received) == 1
 
-# Padding must hide exact plaintext size.
 raw1 = cn.GlobalRelayNode._padded_payload_bytes("MSG", b"x", {})
 raw2 = cn.GlobalRelayNode._padded_payload_bytes("MSG", b"short message", {})
-assert len(raw1) >= 1024 and len(raw2) >= 1024
-assert b"x" not in raw1[-32:]
+assert len(raw1) >= 1024
+assert len(raw1) == len(raw2)
 
-# Room policy: intercept publish before creating policy so no MQTT connection is required.
 capt = []
 a._publish_enveloped = lambda obj, wait_for_publish=False: capt.append(obj)
 policy_events = []
@@ -54,7 +52,6 @@ assert policy_events[-1]["duration_min"] == 5
 assert policy_events[-1]["message_clear_min"] == 2
 assert policy_events[-1]["one_time"] is True
 
-# Wrong room code cannot authenticate/decrypt the room policy.
 wrong = cn.GlobalRelayNode()
 prep(wrong, "Mallory", "wrong-" + cn.secrets.token_urlsafe(24))
 wrong_events = []
@@ -62,7 +59,6 @@ wrong.enh_signals.room_policy_updated.connect(lambda x: wrong_events.append(x))
 wrong._handle_roomcfg4(capt[-1])
 assert not wrong_events
 
-# File code derivation + inner per-file AES-GCM roundtrip.
 salt = os.urandom(16)
 code = "ABCD-EFGH-IJKL"
 key = cn._cn36_file_key_from_code(code, salt)
@@ -75,10 +71,7 @@ enc = cn.AESGCM(key).encrypt(nonce, data, aad)
 assert cn.AESGCM(key).decrypt(nonce, enc, aad) == data
 
 verifier = cn.b64e(cn.hmac.new(key, b"CYPHER_NET_FILE_VERIFY:" + fid.encode(), cn.hashlib.sha256).digest()[:16])
-inc = cn.ProtectedIncomingFile(
-    fid, "Alice", "secret.txt", 1, len(data), dig,
-    cn.b64e(salt), verifier, True
-)
+inc = cn.ProtectedIncomingFile(fid, "Alice", "secret.txt", 1, len(data), dig, cn.b64e(salt), verifier, True)
 inc.add_chunk(0, enc)
 meta = {
     "file_id": fid, "sender": "Alice", "filename": "secret.txt",
@@ -86,19 +79,17 @@ meta = {
     "salt_b64": inc.salt_b64, "verifier_b64": inc.verifier_b64,
     "protected": True, "clear_key_b64": "", "temp_path": inc.temp_path,
 }
-out = b.decrypt_protected_file(meta, code)
-with open(out, "rb") as fh:
-    assert fh.read() == data
-os.remove(out)
-
 failed = False
 try:
     b.decrypt_protected_file(meta, "WRONG-CODE")
 except Exception:
     failed = True
 assert failed
+out = b.decrypt_protected_file(meta, code)
+with open(out, "rb") as fh:
+    assert fh.read() == data
+os.remove(out)
 
-# UI regression: existing GUI builds and new controls exist without replacing core controls.
 w = cn.CypherNetGUI()
 for attr in [
     "btn_join", "btn_disconnect", "btn_send", "btn_file",
