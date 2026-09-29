@@ -112,5 +112,6 @@ jobs:
           path: |
             dist/CYPHER_NET_3_5_0_WINDOWS.exe
             installer_out/CYPHER_NET_3_5_0_WINDOWS_SETUP.exe
+            CYPHER_NET.py
           if-no-files-found: error
           retention-days: 30
