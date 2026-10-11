@@ -48,16 +48,9 @@ jobs:
           # Make the locally authored transformer runner-independent.
           p = pathlib.Path("build_phase1.py")
           s = p.read_text(encoding="utf-8")
-          lines = s.splitlines()
-          replaced = False
-          for i, line in enumerate(lines):
-              if line.strip().startswith("BASE=") or line.strip().startswith("BASE ="):
-                  lines[i] = "BASE=Path('.')"
-                  replaced = True
-                  break
-          if not replaced:
-              raise SystemExit("Could not locate transformer BASE assignment")
-          p.write_text("\n".join(lines) + "\n", encoding="utf-8")
+          # The transformer was authored against /mnt/data; make its input/output paths relative on Windows.
+          s = s.replace("/mnt/data/", "")
+          p.write_text(s, encoding="utf-8")
 
           # The self-test must not attempt a real broker publish while testing accept_peer.
           p = pathlib.Path("PHASE1_SELFTEST.py")
