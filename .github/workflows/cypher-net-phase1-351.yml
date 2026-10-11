@@ -72,7 +72,7 @@ jobs:
           p = pathlib.Path("CYPHER_NET_3_5_1_PHASE1_SOURCE.py")
           data = p.read_bytes()
           actual = hashlib.sha256(data).hexdigest()
-          expected = "dbc84c585d7c770b27956932fea028da61f0bd6b539d65bb5515623b2db671ef"
+          expected = "b79c804cd2a7f59f4fbefe6d313e1041e28c160bb782b3a86c7208b259094bb4"
           print("Phase1 source SHA256:", actual)
           if actual != expected:
               raise SystemExit(f"Source checksum mismatch: {actual}")
