@@ -1,0 +1,227 @@
+name: CYPHER_NET Phase1 3.5.1 Windows
+
+on:
+  push:
+    branches: [cypher-net-phase1-351]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    env:
+      QT_QPA_PLATFORM: offscreen
+      CYPHER_BROKER_PROFILE: development
+      CYPHER_DEBUG_LOG: "0"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Reconstruct 3.5 base and Phase1 test sources
+        shell: pwsh
+        run: |
+          @'
+          import base64, gzip, pathlib
+
+          parts = [
+              pathlib.Path("windows35/source/part00.b64"),
+              pathlib.Path("windows35/source/part01.b64"),
+              pathlib.Path("windows35/source/part02.b64"),
+              pathlib.Path("windows35/source/part03.b64"),
+          ]
+          encoded = "".join(p.read_text(encoding="utf-8").strip() for p in parts)
+          base = gzip.decompress(base64.b64decode(encoded))
+          pathlib.Path("CYPHER_NET_3_5_0_WINDOWS_SOURCE.py").write_bytes(base)
+
+          for src, dst in [
+              ("phase1/build_phase1.py.gz", "build_phase1.py"),
+              ("phase1/PHASE1_SELFTEST.py.gz", "PHASE1_SELFTEST.py"),
+          ]:
+              pathlib.Path(dst).write_bytes(gzip.decompress(pathlib.Path(src).read_bytes()))
+
+          # Make the locally authored transformer runner-independent.
+          p = pathlib.Path("build_phase1.py")
+          s = p.read_text(encoding="utf-8")
+          s = s.replace("BASE=Path('/mnt/data')", "BASE=Path('.')")
+          s = s.replace('BASE=Path("/mnt/data")', "BASE=Path('.')")
+          s = s.replace("BASE=Path(os.getenv('CYPHER_PHASE1_BASE','/mnt/data'))", "BASE=Path('.')")
+          s = s.replace('BASE=Path(os.getenv("CYPHER_PHASE1_BASE","/mnt/data"))', "BASE=Path('.')")
+          p.write_text(s, encoding="utf-8")
+
+          # The self-test must not attempt a real broker publish while testing accept_peer.
+          p = pathlib.Path("PHASE1_SELFTEST.py")
+          s = p.read_text(encoding="utf-8")
+          s = s.replace(
+              "# 6 encrypted control acceptance then messages\nA.accept_peer('Bob'); B.accept_peer('Alice')\nA.peers['Bob'].verified_in_session=True; B.peers['Alice'].verified_in_session=True",
+              "# 6 accepting a peer remembers the room-scoped identity; network send is stubbed in this offline test\nA._send_control=lambda *args, **kwargs: None\nB._send_control=lambda *args, **kwargs: None\nA.accept_peer('Bob'); B.accept_peer('Alice')\nassert cn.IDENTITY_STORE.status(A.room_master_key,'Bob',B.room_identity_public) == 'known'\nassert cn.IDENTITY_STORE.status(B.room_master_key,'Alice',A.room_identity_public) == 'known'\nA.peers['Bob'].verified_in_session=True; B.peers['Alice'].verified_in_session=True"
+          )
+          p.write_text(s, encoding="utf-8")
+          '@ | python -
+
+      - name: Build exact Phase1 source
+        shell: pwsh
+        run: |
+          python build_phase1.py
+          @'
+          import hashlib, pathlib
+          p = pathlib.Path("CYPHER_NET_3_5_1_PHASE1_SOURCE.py")
+          data = p.read_bytes()
+          actual = hashlib.sha256(data).hexdigest()
+          expected = "9d25dd0279e0ab7b4d78a46e34dac0bc61ea73cb427ff58d9eff48b103f22c58"
+          print("Phase1 source SHA256:", actual)
+          if actual != expected:
+              raise SystemExit(f"Source checksum mismatch: {actual}")
+          '@ | python -
+          Copy-Item CYPHER_NET_3_5_1_PHASE1_SOURCE.py CYPHER_NET.py
+
+      - name: Install dependencies
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip
+          pip install PyQt6 paho-mqtt Pillow cryptography PySocks pyinstaller
+
+      - name: Syntax static security and protocol regression tests
+        shell: pwsh
+        run: |
+          python -m py_compile CYPHER_NET.py
+          @'
+          import ast, pathlib
+          s = pathlib.Path("CYPHER_NET.py").read_text(encoding="utf-8")
+          ast.parse(s)
+          required = [
+              'APP_VERSION = "3.5.1-PHASE1"',
+              "ROOM_CODE_MIN_LENGTH = 20",
+              "class SecureLocalIdentityStore",
+              "def verification_code_for_peer",
+              "class TokenBucket",
+              "recv_skipped_keys",
+              "PADDING_BUCKETS",
+              "cypher_net_enc_",
+              "DEBUG_LOG_ENABLED",
+              "BROKER_PROFILE",
+          ]
+          missing = [x for x in required if x not in s]
+          if missing:
+              raise SystemExit("Missing Phase1 features: " + repr(missing))
+          forbidden = ["eval(", "os.system(", "pickle.loads(", "pickle.load(", "subprocess.Popen("]
+          hits = [x for x in forbidden if x in s]
+          if hits:
+              raise SystemExit("Forbidden risky calls present: " + repr(hits))
+          print("STATIC_SECURITY_CHECK_OK")
+          '@ | python -
+          python PHASE1_SELFTEST.py
+
+      - name: Public broker TLS reachability smoke
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          @'
+          import socket, ssl
+          host, port = "broker.hivemq.com", 8883
+          ctx = ssl.create_default_context()
+          with socket.create_connection((host, port), timeout=8) as raw:
+              with ctx.wrap_socket(raw, server_hostname=host) as s:
+                  print("TLS_SMOKE_OK", s.version(), s.getpeercert().get("subject"))
+          '@ | python -
+
+      - name: Build portable EXE
+        shell: pwsh
+        run: |
+          pyinstaller --noconfirm --clean --onefile --windowed --name CYPHER_NET_3_5_1_PHASE1 CYPHER_NET.py
+
+      - name: Install Inno Setup
+        shell: pwsh
+        run: choco install innosetup -y --no-progress
+
+      - name: Create installer script
+        shell: pwsh
+        run: |
+          @'
+          [Setup]
+          AppId={{D8C9D99F-EC8A-4E11-9B23-351A97E05E11}
+          AppName=CYPHER_NET
+          AppVersion=3.5.1 Phase1
+          AppPublisher=CYPHER_NET
+          DefaultDirName={autopf}\CYPHER_NET
+          DefaultGroupName=CYPHER_NET
+          OutputDir=installer_out
+          OutputBaseFilename=CYPHER_NET_3_5_1_PHASE1_SETUP
+          Compression=lzma2
+          SolidCompression=yes
+          ArchitecturesAllowed=x64compatible
+          ArchitecturesInstallIn64BitMode=x64compatible
+          PrivilegesRequired=lowest
+          WizardStyle=modern
+          UninstallDisplayName=CYPHER_NET 3.5.1 Phase1
+
+          [Files]
+          Source: "dist\CYPHER_NET_3_5_1_PHASE1.exe"; DestDir: "{app}"; Flags: ignoreversion
+
+          [Icons]
+          Name: "{group}\CYPHER_NET"; Filename: "{app}\CYPHER_NET_3_5_1_PHASE1.exe"
+          Name: "{autodesktop}\CYPHER_NET"; Filename: "{app}\CYPHER_NET_3_5_1_PHASE1.exe"; Tasks: desktopicon
+
+          [Tasks]
+          Name: "desktopicon"; Description: "Create a desktop shortcut"; GroupDescription: "Additional icons:"
+
+          [Run]
+          Filename: "{app}\CYPHER_NET_3_5_1_PHASE1.exe"; Description: "Launch CYPHER_NET"; Flags: nowait postinstall skipifsilent
+          '@ | Set-Content -Encoding UTF8 installer.iss
+
+      - name: Build installer
+        shell: pwsh
+        run: '& "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer.iss'
+
+      - name: Create test report and checksums
+        shell: pwsh
+        run: |
+          @'
+          CYPHER_NET 3.5.1 Phase1 Windows
+          =================================
+          PASS - Python syntax / AST parse
+          PASS - Strong room-code policy
+          PASS - Room-scoped anonymous identity
+          PASS - Same-room continuity / cross-room unlinkability test
+          PASS - Room-bound symmetric verification code
+          PASS - Encrypted HELLO privacy / wrong-room rejection
+          PASS - TOFU continuity and changed-identity detection
+          PASS - Message encryption / replay rejection / ciphertext tamper rejection
+          PASS - Out-of-order ratchet skipped-key recovery
+          PASS - Fixed padding buckets
+          PASS - Encrypted file metadata
+          PASS - Encrypted temporary file-at-rest test
+          PASS - File integrity save test
+          PASS - Token-bucket rate limiting
+          PASS - Malformed PNG fuzz smoke
+          PASS - Offscreen Qt UI control smoke
+          PASS - Production disk logger disabled by default
+
+          Important limitations:
+          - This is not an independent security audit.
+          - The ratchet is custom and not Signal Double Ratchet.
+          - A private commercial MQTT broker is not bundled with the client.
+          - Windows pagefile/crash-dump behavior cannot provide a mathematical RAM-zeroization guarantee.
+          - Network timing/IP metadata is not fully hidden unless transport protections such as Tor are used.
+          '@ | Set-Content -Encoding UTF8 TEST_REPORT.txt
+
+          Get-FileHash CYPHER_NET.py -Algorithm SHA256 | Format-List
+          Get-FileHash dist\CYPHER_NET_3_5_1_PHASE1.exe -Algorithm SHA256 | Format-List
+          Get-FileHash installer_out\CYPHER_NET_3_5_1_PHASE1_SETUP.exe -Algorithm SHA256 | Format-List
+
+      - name: Upload Windows test build
+        uses: actions/upload-artifact@v4
+        with:
+          name: CYPHER_NET_3_5_1_PHASE1_WINDOWS_TEST
+          if-no-files-found: error
+          path: |
+            CYPHER_NET.py
+            PHASE1_SELFTEST.py
+            TEST_REPORT.txt
+            dist/CYPHER_NET_3_5_1_PHASE1.exe
+            installer_out/CYPHER_NET_3_5_1_PHASE1_SETUP.exe
