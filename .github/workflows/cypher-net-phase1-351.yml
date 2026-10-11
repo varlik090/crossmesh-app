@@ -66,6 +66,7 @@ jobs:
         shell: pwsh
         run: |
           python build_phase1.py
+          python phase1/post_fix.py
           @'
           import hashlib, pathlib
           p = pathlib.Path("CYPHER_NET_3_5_1_PHASE1_SOURCE.py")
