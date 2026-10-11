@@ -48,11 +48,16 @@ jobs:
           # Make the locally authored transformer runner-independent.
           p = pathlib.Path("build_phase1.py")
           s = p.read_text(encoding="utf-8")
-          s = s.replace("BASE=Path('/mnt/data')", "BASE=Path('.')")
-          s = s.replace('BASE=Path("/mnt/data")', "BASE=Path('.')")
-          s = s.replace("BASE=Path(os.getenv('CYPHER_PHASE1_BASE','/mnt/data'))", "BASE=Path('.')")
-          s = s.replace('BASE=Path(os.getenv("CYPHER_PHASE1_BASE","/mnt/data"))', "BASE=Path('.')")
-          p.write_text(s, encoding="utf-8")
+          lines = s.splitlines()
+          replaced = False
+          for i, line in enumerate(lines):
+              if line.strip().startswith("BASE=") or line.strip().startswith("BASE ="):
+                  lines[i] = "BASE=Path('.')"
+                  replaced = True
+                  break
+          if not replaced:
+              raise SystemExit("Could not locate transformer BASE assignment")
+          p.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
           # The self-test must not attempt a real broker publish while testing accept_peer.
           p = pathlib.Path("PHASE1_SELFTEST.py")
